@@ -1,0 +1,115 @@
+
+连接
+----------------------------------------------------------------------------------------------------------------
+// Use TCP connection.
+var options = new MqttClientOptionsBuilder()
+    .WithTcpServer("broker.hivemq.com", 1883) // Port is optional
+    .Build();
+
+await mqttClient.ConnectAsync(options, CancellationToken.None); // Since 3.0.5 with CancellationToken
+
+
+重连
+----------------------------------------------------------------------------------------------------------------
+mqttClient.UseDisconnectedHandler(async e =>
+{
+    Console.WriteLine("### DISCONNECTED FROM SERVER ###");
+    await Task.Delay(TimeSpan.FromSeconds(5));
+
+    try
+    {
+        await mqttClient.ConnectAsync(options, CancellationToken.None); // Since 3.0.5 with CancellationToken
+    }
+    catch
+    {
+        Console.WriteLine("### RECONNECTING FAILED ###");
+    }
+});
+
+
+发布消息
+----------------------------------------------------------------------------------------------------------------
+public void publish(string topic, string jsonStr)
+{
+	byte[] payload = ASCIIEncoding.UTF8.GetBytes(jsonStr);
+	var sendmessage = new MqttApplicationMessageBuilder()
+		.WithTopic(topic)
+		.WithPayload(payload)
+		.WithAtMostOnceQoS()
+		.WithRetainFlag()
+		.Build();
+	mqttClient.PublishAsync(sendmessage, CancellationToken.None); // Since 3.0.5 with CancellationToken
+}
+
+
+订阅消息
+----------------------------------------------------------------------------------------------------------------
+mqttClient.UseConnectedHandler(async e =>
+{// Subscribe to a topic
+    await mqttClient.SubscribeAsync(new TopicFilterBuilder().WithTopic("my/topic").Build());
+});
+
+
+连接、订阅、重连
+----------------------------------------------------------------------------------------------------------------
+private void connect(string server, int port)
+{
+	if(mqttClient == null)
+	{
+		mqttClient = new MqttFactory().CreateMqttClient() as MqttClient;
+	}
+
+	var options = new MqttClientOptionsBuilder()
+		.WithTcpServer(server, port) // Port is optional
+		.WithClientId("MDEP")
+		.Build();
+	mqttClient.ConnectAsync(options, CancellationToken.None); // Since 3.0.5 with CancellationToken
+
+	mqttClient.UseConnectedHandler(async e =>
+	{// Subscribe to a topic
+		var topicFilterBulder = new MqttTopicFilterBuilder().WithTopic("PLC/write").WithAtMostOnceQoS().Build();
+		await mqttClient.SubscribeAsync(topicFilterBulder);
+	});
+
+	mqttClient.UseDisconnectedHandler(async e =>
+	{// Reconnect
+		await Task.Delay(TimeSpan.FromSeconds(10));
+
+		try
+		{
+			connect(server, port);
+		}
+		catch(Exception ex)
+		{
+			ShowError(ex.Message, "");
+		}
+	});
+
+	Func<MqttApplicationMessageReceivedEventArgs, Task> func = MqttApplicationMessageReceived;
+	mqttClient.UseApplicationMessageReceivedHandler(func);
+
+	//mqttClient.ConnectedHandler = new MqttClientConnectedHandlerDelegate(new Func<MqttClientConnectedEventArgs, Task>(Connected));
+	//mqttClient.DisconnectedHandler = new MqttClientDisconnectedHandlerDelegate(new Func<MqttClientDisconnectedEventArgs, Task>(Disconnected));
+	//mqttClient.ApplicationMessageReceivedHandler = new MqttApplicationMessageReceivedHandlerDelegate(new Func<MqttApplicationMessageReceivedEventArgs>(MqttApplicationMessageReceived));
+}
+
+
+接收消息
+----------------------------------------------------------------------------------------------------------------
+private Task MqttApplicationMessageReceived(MqttApplicationMessageReceivedEventArgs arg)
+{
+	try
+	{
+		byte[] data = arg.ApplicationMessage.Payload;
+		DateTime time = DateTime.Now;
+		string jsonStr = ASCIIEncoding.ASCII.GetString(data, 0, data.Length);
+		HandleCommand(this, time, jsonStr);//处理数据
+	}
+	catch (Exception ex)
+	{
+		ShowError(ex.Message, "");
+	}
+	throw new NotImplementedException();
+}
+
+
